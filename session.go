@@ -181,6 +181,83 @@ func (s *Session) handle(request *pdu.HeaderPacket) *pdu.HeaderPacket {
 			}
 		}
 
+	case *pdu.GetBulk:
+		if s.handler == nil {
+			s.client.logger.Warn("no handler for session specified")
+			break
+		}
+
+		searchRanges := requestPacket.SearchRanges
+		totalRanges := len(searchRanges)
+
+		nonRepeaters := int(requestPacket.NonRepeaters)
+		if nonRepeaters > totalRanges {
+			nonRepeaters = totalRanges
+		}
+
+		for index := 0; index < nonRepeaters; index++ {
+			sr := searchRanges[index]
+			from := sr.From.GetIdentifier()
+			include := sr.From.Include == 1
+			to := sr.To.GetIdentifier()
+
+			oid, t, v, err := s.handler.GetNext(ctx, from, include, to)
+			if err != nil {
+				s.client.logger.Error("packet error", slog.Any("err", err))
+				responsePacket.Error = pdu.ErrorProcessing
+			}
+
+			if oid == nil {
+				responsePacket.Variables.Add(from, pdu.VariableTypeEndOfMIBView, nil)
+			} else {
+				responsePacket.Variables.Add(oid, t, v)
+			}
+		}
+
+		remaining := totalRanges - nonRepeaters
+		if remaining <= 0 || requestPacket.MaxRepetitions == 0 {
+			break
+		}
+
+		currentFrom := make([]value.OID, remaining)
+		includeFrom := make([]bool, remaining)
+		toOIDs := make([]value.OID, remaining)
+		exhausted := make([]bool, remaining)
+
+		for index := 0; index < remaining; index++ {
+			sr := searchRanges[nonRepeaters+index]
+			currentFrom[index] = sr.From.GetIdentifier()
+			includeFrom[index] = sr.From.Include == 1
+			toOIDs[index] = sr.To.GetIdentifier()
+		}
+
+		maxRepetitions := int(requestPacket.MaxRepetitions)
+		for repetition := 0; repetition < maxRepetitions; repetition++ {
+			for index := 0; index < remaining; index++ {
+				if exhausted[index] {
+					responsePacket.Variables.Add(currentFrom[index], pdu.VariableTypeEndOfMIBView, nil)
+					continue
+				}
+
+				oid, t, v, err := s.handler.GetNext(ctx, currentFrom[index], includeFrom[index], toOIDs[index])
+				if err != nil {
+					s.client.logger.Error("packet error", slog.Any("err", err))
+					responsePacket.Error = pdu.ErrorProcessing
+				}
+
+				if oid == nil {
+					responsePacket.Variables.Add(currentFrom[index], pdu.VariableTypeEndOfMIBView, nil)
+					exhausted[index] = true
+					includeFrom[index] = false
+					continue
+				}
+
+				responsePacket.Variables.Add(oid, t, v)
+				currentFrom[index] = oid
+				includeFrom[index] = false
+			}
+		}
+
 	default:
 		s.client.logger.Error("unable to handle packet", slog.String("packet-type", request.Header.Type.String()))
 		responsePacket.Error = pdu.ErrorProcessing
