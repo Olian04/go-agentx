@@ -17,7 +17,6 @@ import (
 
 func TestListHandler(t *testing.T) {
 	e := setUpTestEnvironment(t)
-	defer e.tearDown()
 
 	lh := &agentx.ListHandler{}
 	i := lh.Add("1.3.6.1.4.1.45995.3.1")

@@ -19,8 +19,7 @@ import (
 )
 
 type environment struct {
-	client   *agentx.Client
-	tearDown func()
+	client *agentx.Client
 }
 
 func setUpTestEnvironment(tb testing.TB) *environment {
@@ -41,11 +40,10 @@ func setUpTestEnvironment(tb testing.TB) *environment {
 		agentx.WithTimeout(60*time.Second))
 	require.NoError(tb, err)
 
-	return &environment{
-		client: client,
-		tearDown: func() {
-			require.NoError(tb, client.Close())
-			require.NoError(tb, cmd.Process.Kill())
-		},
-	}
+	tb.Cleanup(func() {
+		require.NoError(tb, client.Close())
+		require.NoError(tb, cmd.Process.Kill())
+	})
+
+	return &environment{client: client}
 }

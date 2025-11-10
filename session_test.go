@@ -15,7 +15,6 @@ import (
 
 func TestSession(t *testing.T) {
 	e := setUpTestEnvironment(t)
-	defer e.tearDown()
 
 	t.Run("Open", func(t *testing.T) {
 		session, err := e.client.Session(nil, "", nil)

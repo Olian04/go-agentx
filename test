@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -euo pipefail
+
+docker run --rm -it \
+  -v "$(pwd)":/workspace \
+  -v go-mod-cache:/go/pkg/mod \
+  -v go-build-cache:/root/.cache/go-build \
+  -w /workspace \
+  golang:alpine \
+  sh -c 'apk add --no-cache net-snmp net-snmp-tools && \
+  export PATH=/usr/local/go/bin:$PATH && echo "Running tests..." && 
+  go mod download &&
+  go test ./... -v'
