@@ -11,8 +11,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/posteo/go-agentx/pdu"
-	"github.com/posteo/go-agentx/value"
+	"github.com/Olian04/go-agentx/pdu"
+	"github.com/Olian04/go-agentx/value"
 )
 
 // Session defines an agentx session.
