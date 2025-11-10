@@ -156,6 +156,8 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 				packet = &pdu.Get{}
 			case pdu.TypeGetNext:
 				packet = &pdu.GetNext{}
+			case pdu.TypeGetBulk:
+				packet = &pdu.GetBulk{}
 			default:
 				c.logger.Error("unable to handle packet", slog.String("packet-type", header.Type.String()))
 			}
