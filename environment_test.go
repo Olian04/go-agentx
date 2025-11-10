@@ -24,22 +24,16 @@ type environment struct {
 }
 
 func setUpTestEnvironment(tb testing.TB) *environment {
-	var cmd *exec.Cmd
+	cmd := exec.Command("snmpd", "-Ln", "-f", "-C", "-c", "snmpd.conf")
 
-	if os.Getenv("AGENTX_USE_EXTERNAL_SNMPD") == "" {
-		cmd = exec.Command("snmpd", "-Ln", "-f", "-C", "-c", "snmpd.conf")
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(tb, err)
+	go func() {
+		io.Copy(os.Stdout, stdout)
+	}()
 
-		stdout, err := cmd.StdoutPipe()
-		require.NoError(tb, err)
-		go func() {
-			io.Copy(os.Stdout, stdout)
-		}()
-
-		log.Printf("run: %s", cmd)
-		require.NoError(tb, cmd.Start())
-	} else {
-		log.Printf("using externally managed snmpd via AGENTX_USE_EXTERNAL_SNMPD")
-	}
+	log.Printf("run: %s", cmd)
+	require.NoError(tb, cmd.Start())
 	time.Sleep(500 * time.Millisecond)
 
 	client, err := agentx.Dial("tcp", "127.0.0.1:30705",
@@ -51,9 +45,7 @@ func setUpTestEnvironment(tb testing.TB) *environment {
 		client: client,
 		tearDown: func() {
 			require.NoError(tb, client.Close())
-			if cmd != nil && cmd.Process != nil {
-				require.NoError(tb, cmd.Process.Kill())
-			}
+			require.NoError(tb, cmd.Process.Kill())
 		},
 	}
 }

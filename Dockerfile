@@ -11,8 +11,6 @@ RUN go mod download
 
 COPY . .
 
-RUN install -Dm644 snmpd.conf /etc/snmp/snmpd.conf && \
-    chmod +x docker/run-tests.sh
+RUN install -Dm644 snmpd.conf /etc/snmp/snmpd.conf
 
-ENTRYPOINT ["/workspace/docker/run-tests.sh"]
-CMD ["./..."]
+CMD ["go", "test", "./..."]
