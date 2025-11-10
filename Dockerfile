@@ -1,8 +1,6 @@
-FROM golang:1.22-bookworm
+FROM golang:1.22-alpine
 
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends snmpd && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache net-snmp
 
 WORKDIR /workspace
 
