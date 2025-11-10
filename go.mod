@@ -1,6 +1,6 @@
 module github.com/Olian04/go-agentx
 
-go 1.18
+go 1.25
 
 require github.com/stretchr/testify v1.6.1
 
