@@ -9,6 +9,4 @@ RUN go mod download
 
 COPY . .
 
-RUN install -Dm644 snmpd.conf /etc/snmp/snmpd.conf
-
 CMD ["go", "test", "./..."]
