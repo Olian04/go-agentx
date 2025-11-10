@@ -1,0 +1,26 @@
+#!/bin/bash
+
+VERSION=$(jq -r '.version' ./release.config.json)
+TAG="v$VERSION"
+
+# shellcheck disable=SC2086
+if [ "$(git tag | grep $TAG)" = "$TAG" ]; then
+  echo "Abort due to version conflict. Version $VERSION already exists."
+  exit 1
+fi
+
+if [ "$(git status --short)" != "" ]; then
+  echo "Abort due to uncommited changes."
+  git status --short
+  exit 1
+fi
+
+if [ "$(git cherry -v)" != "" ]; then
+  echo "Abort due to local changes not pushed to remote."
+  git cherry -v
+  exit 1
+fi
+
+git tag "$TAG" -a -m "Release $VERSION" && \
+git push origin --tags && \
+echo "Release created: $TAG"
