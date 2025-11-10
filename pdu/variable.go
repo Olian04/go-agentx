@@ -11,7 +11,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/posteo/go-agentx/value"
+	"github.com/Olian04/go-agentx/value"
 )
 
 // Variable defines the pdu varbind packet.
