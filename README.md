@@ -1,7 +1,5 @@
 # AgentX
 
-[![Documentation](https://godoc.org/github.com/Olian04/go-agentx?status.svg)](http://godoc.org/github.com/Olian04/go-agentx)
-
 A library with a pure Go implementation of the [AgentX-Protocol](http://tools.ietf.org/html/rfc2741). The library is not yet feature-complete, but should be far enough to used in a production environment.
 
 The AgentX-Protocol can be used to extend a snmp-daemon such that it dispatches the requests to an OID-subtree to your Go application. Those requests are than handled by this library and can be replied with metrics about your applications state.
