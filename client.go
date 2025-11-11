@@ -85,16 +85,22 @@ func (c *Client) runTransmitter() chan *pdu.HeaderPacket {
 		for headerPacket := range tx {
 			headerPacketBytes, err := headerPacket.MarshalBinary()
 			if err != nil {
-				c.logger.Debug("header packet marshal error", slog.Any("err", err))
+				c.logger.Error("headerPacket marshal error",
+					slog.String("packet_type", headerPacket.Header.Type.String()),
+					slog.Any("err", err))
 				continue
 			}
 			writer := bufio.NewWriter(c.conn)
 			if _, err := writer.Write(headerPacketBytes); err != nil {
-				c.logger.Debug("header packet write error", slog.Any("err", err))
+				c.logger.Error("headerPacket write error",
+					slog.String("packet_type", headerPacket.Header.Type.String()),
+					slog.Any("err", err))
 				continue
 			}
 			if err := writer.Flush(); err != nil {
-				c.logger.Debug("header packet flush error", slog.Any("err", err))
+				c.logger.Error("headerPacket flush error",
+					slog.String("packet_type", headerPacket.Header.Type.String()),
+					slog.Any("err", err))
 				continue
 			}
 		}
@@ -145,8 +151,17 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 
 			header := &pdu.Header{}
 			if err := header.UnmarshalBinary(headerBytes); err != nil {
-				panic(err)
+				c.logger.Error("header unmarshal error", slog.Any("err", err))
+				continue mainLoop
 			}
+
+			c.logger.Debug("received packet",
+				slog.String("packet_type", header.Type.String()),
+				slog.Any("session_id", header.SessionID),
+				slog.Any("txn_id", header.TransactionID),
+				slog.Any("packet_id", header.PacketID),
+				slog.Any("len", header.PayloadLength),
+			)
 
 			var packet pdu.Packet
 			switch header.Type {
@@ -160,15 +175,24 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 				packet = &pdu.GetBulk{}
 			default:
 				c.logger.Error("unable to handle packet", slog.String("packet-type", header.Type.String()))
+				continue mainLoop
 			}
 
 			packetBytes := make([]byte, header.PayloadLength)
 			if _, err := reader.Read(packetBytes); err != nil {
-				panic(err)
+				c.logger.Error("unable to read packet",
+					slog.String("type", header.Type.String()),
+					slog.Any("session_id", header.SessionID),
+					slog.Any("txn_id", header.TransactionID),
+					slog.Any("packet_id", header.PacketID),
+					slog.Any("err", err),
+				)
+				continue mainLoop
 			}
 
 			if err := packet.UnmarshalBinary(packetBytes); err != nil {
-				panic(err)
+				c.logger.Error("unable to unmarshal packet", slog.String("packet-type", header.Type.String()), slog.Any("err", err))
+				continue mainLoop
 			}
 
 			rx <- &pdu.HeaderPacket{Header: header, Packet: packet}
@@ -204,7 +228,12 @@ func (c *Client) runDispatcher(tx, rx chan *pdu.HeaderPacket) {
 					if ok {
 						tx <- session.handle(headerPacket)
 					} else {
-						c.logger.Error("got packet without session", slog.String("packet-type", headerPacket.Header.Type.String()))
+						c.logger.Error("got packet without session",
+							slog.String("packet_type", headerPacket.Header.Type.String()),
+							slog.Any("session_id", headerPacket.Header.SessionID),
+							slog.Any("packet_id", headerPacket.Header.PacketID),
+							slog.Int("awaiting_responses", len(responseChans)),
+						)
 					}
 				}
 			}
