@@ -41,7 +41,9 @@ func (v *Variable) ByteSize() int {
 func (v *Variable) MarshalBinary() ([]byte, error) {
 	buffer := &bytes.Buffer{}
 
-	binary.Write(buffer, binary.LittleEndian, &v.Type)
+	// VarBind header: 1 byte type, 3 reserved bytes (AgentX alignment)
+	buffer.WriteByte(byte(v.Type))
+	buffer.WriteByte(0x00)
 	buffer.WriteByte(0x00)
 	buffer.WriteByte(0x00)
 
@@ -112,7 +114,14 @@ func (v *Variable) MarshalBinary() ([]byte, error) {
 func (v *Variable) UnmarshalBinary(data []byte) error {
 	buffer := bytes.NewBuffer(data)
 
-	if err := binary.Read(buffer, binary.LittleEndian, &v.Type); err != nil {
+	// Read 1 byte type and skip 3 reserved bytes
+	if b, err := buffer.ReadByte(); err != nil {
+		return err
+	} else {
+		v.Type = VariableType(b)
+	}
+	// skip 3 reserved bytes
+	if _, err := buffer.Read(make([]byte, 3)); err != nil {
 		return err
 	}
 	offset := 4
