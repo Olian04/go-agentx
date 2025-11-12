@@ -6,7 +6,6 @@ package agentx_test
 
 import (
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -23,6 +22,10 @@ type environment struct {
 }
 
 func setUpTestEnvironment(tb testing.TB) *environment {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})).With("test", tb.Name()))
+
 	cmd := exec.Command("snmpd", "-Ln", "-f", "-C", "-c", "snmpd.conf")
 
 	stdout, err := cmd.StdoutPipe()
@@ -31,13 +34,15 @@ func setUpTestEnvironment(tb testing.TB) *environment {
 		io.Copy(os.Stdout, stdout)
 	}()
 
-	log.Printf("run: %s", cmd)
+	slog.Info("running command", slog.String("command", cmd.String()))
 	require.NoError(tb, cmd.Start())
 	time.Sleep(500 * time.Millisecond)
 
 	client, err := agentx.Dial("tcp", "127.0.0.1:30705",
-		agentx.WithLogger(slog.New(slog.NewTextHandler(os.Stdout, nil))),
-		agentx.WithTimeout(60*time.Second))
+		agentx.WithLogger(slog.Default()),
+		agentx.WithTimeout(60*time.Second),
+		agentx.WithReconnectInterval(1*time.Second),
+	)
 	require.NoError(tb, err)
 
 	tb.Cleanup(func() {
