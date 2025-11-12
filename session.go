@@ -135,6 +135,8 @@ func (s *Session) handle(request *pdu.HeaderPacket) *pdu.HeaderPacket {
 	responseHeader.SessionID = request.Header.SessionID
 	responseHeader.TransactionID = request.Header.TransactionID
 	responseHeader.PacketID = request.Header.PacketID
+	// Mirror flags (e.g., byte-order) from the request so the master parses our response correctly
+	responseHeader.Flags = request.Header.Flags
 	responsePacket := &pdu.Response{}
 
 	ctx := context.Background()

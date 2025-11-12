@@ -27,7 +27,8 @@ func (r *Response) Type() Type {
 func (r *Response) MarshalBinary() ([]byte, error) {
 	buffer := &bytes.Buffer{}
 
-	upTime := uint32(r.UpTime.Seconds() / 100)
+	// AgentX encodes sysUpTime in hundredths of a second (centiseconds)
+	upTime := uint32(r.UpTime.Seconds() * 100)
 	binary.Write(buffer, binary.LittleEndian, &upTime)
 	binary.Write(buffer, binary.LittleEndian, &r.Error)
 	binary.Write(buffer, binary.LittleEndian, &r.Index)
@@ -49,7 +50,8 @@ func (r *Response) UnmarshalBinary(data []byte) error {
 	if err := binary.Read(buffer, binary.LittleEndian, &upTime); err != nil {
 		return err
 	}
-	r.UpTime = time.Second * time.Duration(upTime*100)
+	// Convert centiseconds to duration
+	r.UpTime = time.Duration(upTime) * time.Second / 100
 	if err := binary.Read(buffer, binary.LittleEndian, &r.Error); err != nil {
 		return err
 	}
