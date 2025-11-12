@@ -11,6 +11,11 @@ import (
 	"github.com/Olian04/go-agentx/value"
 )
 
+const (
+	INCLUDE_TRUE  = 0x01
+	INCLUDE_FALSE = 0x00
+)
+
 // ObjectIdentifier defines the pdu object identifier packet.
 type ObjectIdentifier struct {
 	Prefix         uint8
@@ -21,18 +26,15 @@ type ObjectIdentifier struct {
 // SetInclude sets the include field.
 func (o *ObjectIdentifier) SetInclude(value bool) {
 	if value {
-		o.Include = 0x01
+		o.Include = INCLUDE_TRUE
 	} else {
-		o.Include = 0x00
+		o.Include = INCLUDE_FALSE
 	}
 }
 
 // GetInclude returns true if the include field ist set, false otherwise.
 func (o *ObjectIdentifier) GetInclude() bool {
-	if o.Include == 0x00 {
-		return false
-	}
-	return true
+	return o.Include == INCLUDE_TRUE
 }
 
 // SetIdentifier set the subidentifiers by the provided oid string.
