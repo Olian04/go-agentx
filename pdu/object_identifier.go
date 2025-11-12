@@ -37,13 +37,15 @@ func (o *ObjectIdentifier) GetInclude() bool {
 
 // SetIdentifier set the subidentifiers by the provided oid string.
 func (o *ObjectIdentifier) SetIdentifier(oid value.OID) {
+	// AgentX OID wire format uses a 'Prefix' to compress 1.3.6.1.<prefix>
+	// The Subidentifiers must NOT include the 1.3.6.1.<prefix> part when Prefix is set.
 	o.Subidentifiers = make([]uint32, 0)
-
+	o.Prefix = 0
 	if len(oid) > 4 && oid[0] == 1 && oid[1] == 3 && oid[2] == 6 && oid[3] == 1 {
-		o.Subidentifiers = append(o.Subidentifiers, uint32(1), uint32(3), uint32(6), uint32(1), uint32(oid[4]))
+		// Set Prefix to the 5th arc and strip the first 5 arcs from subids
+		o.Prefix = uint8(oid[4])
 		oid = oid[5:]
 	}
-
 	o.Subidentifiers = append(o.Subidentifiers, oid...)
 }
 
