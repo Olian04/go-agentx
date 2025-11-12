@@ -10,7 +10,10 @@ import (
 )
 
 func SNMPGet(tb testing.TB, oid string) string {
-	cmd := exec.Command("snmpget", "-v2c", "-cpublic", "-On", "127.0.0.1:30161", oid)
+	args := []string{"-v2c", "-cpublic", "-On", "127.0.0.1:30161"}
+	// Allow multiple OIDs separated by spaces
+	args = append(args, strings.Fields(oid)...)
+	cmd := exec.Command("snmpget", args...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(tb, err)
 	return strings.TrimSpace(string(output))

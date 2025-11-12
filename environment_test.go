@@ -23,7 +23,7 @@ type environment struct {
 
 func setUpTestEnvironment(tb testing.TB) *environment {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelError,
 	})).With("test", tb.Name()))
 
 	cmd := exec.Command("snmpd", "-Ln", "-f", "-C", "-c", "snmpd.conf")

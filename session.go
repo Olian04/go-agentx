@@ -149,19 +149,26 @@ func (s *Session) handle(request *pdu.HeaderPacket) *pdu.HeaderPacket {
 	case *pdu.Get:
 		if s.handler == nil {
 			s.client.logger.Warn("no handler for session specified")
-			responsePacket.Variables.Add(requestPacket.GetOID(), pdu.VariableTypeNull, nil)
+			// Return Null for each requested OID
+			for _, sr := range requestPacket.SearchRanges {
+				responsePacket.Variables.Add(sr.From.GetIdentifier(), pdu.VariableTypeNull, nil)
+			}
 			break
 		}
 
-		oid, t, v, err := s.handler.Get(ctx, requestPacket.GetOID())
-		if err != nil {
-			s.client.logger.Error("packet error", slog.Any("err", err))
-			responsePacket.Error = pdu.ErrorProcessing
-		}
-		if oid == nil {
-			responsePacket.Variables.Add(requestPacket.GetOID(), pdu.VariableTypeNoSuchObject, nil)
-		} else {
-			responsePacket.Variables.Add(oid, t, v)
+		// One response varbind per requested OID
+		for _, sr := range requestPacket.SearchRanges {
+			reqOID := sr.From.GetIdentifier()
+			oid, t, v, err := s.handler.Get(ctx, reqOID)
+			if err != nil {
+				s.client.logger.Error("packet error", slog.Any("err", err))
+				responsePacket.Error = pdu.ErrorProcessing
+			}
+			if oid == nil {
+				responsePacket.Variables.Add(reqOID, pdu.VariableTypeNoSuchObject, nil)
+			} else {
+				responsePacket.Variables.Add(oid, t, v)
+			}
 		}
 
 	case *pdu.GetNext:

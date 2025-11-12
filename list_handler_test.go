@@ -19,9 +19,13 @@ func TestListHandler(t *testing.T) {
 	e := setUpTestEnvironment(t)
 
 	lh := &agentx.ListHandler{}
-	i := lh.Add("1.3.6.1.4.1.45995.3.1")
-	i.Type = pdu.VariableTypeOctetString
-	i.Value = "test"
+	i1 := lh.Add("1.3.6.1.4.1.45995.3.1")
+	i1.Type = pdu.VariableTypeOctetString
+	i1.Value = "test"
+
+	i2 := lh.Add("1.3.6.1.4.1.45995.3.3")
+	i2.Type = pdu.VariableTypeOctetString
+	i2.Value = "test2"
 
 	session, err := e.client.Session(value.MustParseOID("1.3.6.1.4.1.45995"), "test client", lh)
 	require.NoError(t, err)
@@ -32,7 +36,7 @@ func TestListHandler(t *testing.T) {
 	require.NoError(t, session.Register(127, baseOID))
 	defer session.Unregister(127, baseOID)
 
-	t.Run("Get", func(t *testing.T) {
+	t.Run("Get (single OID)", func(t *testing.T) {
 		assert.Equal(t,
 			".1.3.6.1.4.1.45995.3.1 = STRING: \"test\"",
 			SNMPGet(t, "1.3.6.1.4.1.45995.3.1"))
@@ -40,6 +44,12 @@ func TestListHandler(t *testing.T) {
 		assert.Equal(t,
 			".1.3.6.1.4.1.45995.3.2 = No Such Object available on this agent at this OID",
 			SNMPGet(t, "1.3.6.1.4.1.45995.3.2"))
+	})
+
+	t.Run("Get (multiple OIDs)", func(t *testing.T) {
+		assert.Equal(t,
+			".1.3.6.1.4.1.45995.3.1 = STRING: \"test\"\n.1.3.6.1.4.1.45995.3.3 = STRING: \"test2\"",
+			SNMPGet(t, "1.3.6.1.4.1.45995.3.1 1.3.6.1.4.1.45995.3.3"))
 	})
 
 	t.Run("GetNext", func(t *testing.T) {
