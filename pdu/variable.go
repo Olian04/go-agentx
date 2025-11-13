@@ -28,8 +28,8 @@ func (v *Variable) Set(oid value.OID, t VariableType, value interface{}) {
 	v.Value = value
 }
 
-// ByteSize returns the number of bytes, the binding would need in the encoded version.
-func (v *Variable) ByteSize() int {
+// MustGetByteSize returns the number of bytes, the binding would need in the encoded version. It panics on error.
+func (v *Variable) MustGetByteSize() int {
 	bytes, err := v.MarshalBinary()
 	if err != nil {
 		panic(err)

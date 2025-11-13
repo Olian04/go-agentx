@@ -42,7 +42,7 @@ func (v *Variables) UnmarshalBinary(data []byte) error {
 			return err
 		}
 		*v = append(*v, variable)
-		offset += variable.ByteSize()
+		offset += variable.MustGetByteSize()
 	}
 	return nil
 }
