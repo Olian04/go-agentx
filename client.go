@@ -146,7 +146,7 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 										getPacketHeaderSlogAttrs(session.openRequestPacket.Header),
 										slog.Any("err", err),
 									)
-									return
+									return // from goroutine
 								}
 								c.sessions[session.ID()] = session
 							}
@@ -155,7 +155,8 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 						continue mainLoop
 					}
 				}
-				panic(err)
+				c.logger.Error("unexpected error", slog.Any("err", err))
+				continue mainLoop
 			}
 
 			header := &pdu.Header{}
