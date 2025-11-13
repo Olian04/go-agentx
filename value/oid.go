@@ -15,7 +15,7 @@ import (
 type OID []uint32
 
 // ParseOID parses the provided string and returns a valid oid. If one of the
-// subidentifers canot be parsed to an uint32, the function will panic.
+// subidentifiers cannot be parsed to an uint32, the function will return an error.
 func ParseOID(text string) (OID, error) {
 	var result OID
 
@@ -23,7 +23,7 @@ func ParseOID(text string) (OID, error) {
 	for _, part := range parts {
 		subidentifier, err := strconv.ParseUint(part, 10, 32)
 		if err != nil {
-			return nil, fmt.Errorf("parse uint [%s]: %w", part, err)
+			return nil, fmt.Errorf("parse subidentifier uint32 from string [%s]: %w", part, err)
 		}
 		result = append(result, uint32(subidentifier))
 	}
