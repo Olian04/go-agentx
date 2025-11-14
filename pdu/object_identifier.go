@@ -5,7 +5,6 @@
 package pdu
 
 import (
-	"bytes"
 	"encoding/binary"
 
 	"github.com/Olian04/go-agentx/value"
@@ -41,14 +40,14 @@ func (o *ObjectIdentifier) GetInclude() bool {
 func (o *ObjectIdentifier) SetIdentifier(oid value.OID) {
 	// AgentX OID wire format uses a 'Prefix' to compress 1.3.6.1.<prefix>
 	// The Subidentifiers must NOT include the 1.3.6.1.<prefix> part when Prefix is set.
-	o.Subidentifiers = make([]uint32, 0)
 	o.Prefix = 0
 	if len(oid) > 4 && oid[0] == 1 && oid[1] == 3 && oid[2] == 6 && oid[3] == 1 {
 		// Set Prefix to the 5th arc and strip the first 5 arcs from subids
 		o.Prefix = uint8(oid[4])
 		oid = oid[5:]
 	}
-	o.Subidentifiers = append(o.Subidentifiers, oid...)
+	o.Subidentifiers = make([]uint32, len(oid))
+	copy(o.Subidentifiers, oid)
 }
 
 // GetIdentifier returns the identifier as an oid string.
@@ -67,29 +66,28 @@ func (o *ObjectIdentifier) ByteSize() int {
 
 // MarshalBinary returns the pdu packet as a slice of bytes.
 func (o *ObjectIdentifier) MarshalBinary() ([]byte, error) {
-	buffer := bytes.NewBuffer([]byte{byte(len(o.Subidentifiers)), o.Prefix, o.Include, 0x00})
-
-	for _, subidentifier := range o.Subidentifiers {
-		binary.Write(buffer, binary.LittleEndian, &subidentifier)
+	count := len(o.Subidentifiers)
+	result := make([]byte, 4+count*4)
+	result[0] = byte(count)
+	result[1] = o.Prefix
+	result[2] = o.Include
+	// result[3] reserved (0x00)
+	for i, sub := range o.Subidentifiers {
+		binary.LittleEndian.PutUint32(result[4+i*4:], sub)
 	}
-
-	return buffer.Bytes(), nil
+	return result, nil
 }
 
 // UnmarshalBinary sets the packet structure from the provided slice of bytes.
 func (o *ObjectIdentifier) UnmarshalBinary(data []byte) error {
-	count := data[0]
+	count := int(data[0])
 	o.Prefix = data[1]
 	o.Include = data[2]
 
-	o.Subidentifiers = make([]uint32, 0)
-	buffer := bytes.NewBuffer(data[4:])
-	for index := byte(0); index < count; index++ {
-		var subidentifier uint32
-		if err := binary.Read(buffer, binary.LittleEndian, &subidentifier); err != nil {
-			return err
-		}
-		o.Subidentifiers = append(o.Subidentifiers, subidentifier)
+	o.Subidentifiers = make([]uint32, count)
+	base := 4
+	for i := 0; i < count; i++ {
+		o.Subidentifiers[i] = binary.LittleEndian.Uint32(data[base+i*4:])
 	}
 
 	return nil

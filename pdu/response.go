@@ -4,8 +4,8 @@
 
 package pdu
 
+
 import (
-	"bytes"
 	"encoding/binary"
 	"time"
 )
@@ -25,39 +25,27 @@ func (r *Response) Type() Type {
 
 // MarshalBinary returns the pdu packet as a slice of bytes.
 func (r *Response) MarshalBinary() ([]byte, error) {
-	buffer := &bytes.Buffer{}
-
 	// AgentX encodes sysUpTime in hundredths of a second (centiseconds)
 	upTime := uint32(r.UpTime.Seconds() * 100)
-	binary.Write(buffer, binary.LittleEndian, &upTime)
-	binary.Write(buffer, binary.LittleEndian, &r.Error)
-	binary.Write(buffer, binary.LittleEndian, &r.Index)
-
 	vBytes, err := r.Variables.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
-	buffer.Write(vBytes)
-
-	return buffer.Bytes(), nil
+	result := make([]byte, 8+len(vBytes))
+	binary.LittleEndian.PutUint32(result[0:], upTime)
+	binary.LittleEndian.PutUint16(result[4:], uint16(r.Error))
+	binary.LittleEndian.PutUint16(result[6:], r.Index)
+	copy(result[8:], vBytes)
+	return result, nil
 }
 
 // UnmarshalBinary sets the packet structure from the provided slice of bytes.
 func (r *Response) UnmarshalBinary(data []byte) error {
-	buffer := bytes.NewBuffer(data)
-
-	upTime := uint32(0)
-	if err := binary.Read(buffer, binary.LittleEndian, &upTime); err != nil {
-		return err
-	}
+	upTime := binary.LittleEndian.Uint32(data[0:])
 	// Convert centiseconds to duration
 	r.UpTime = time.Duration(upTime) * time.Second / 100
-	if err := binary.Read(buffer, binary.LittleEndian, &r.Error); err != nil {
-		return err
-	}
-	if err := binary.Read(buffer, binary.LittleEndian, &r.Index); err != nil {
-		return err
-	}
+	r.Error = Error(binary.LittleEndian.Uint16(data[4:]))
+	r.Index = binary.LittleEndian.Uint16(data[6:])
 	if err := r.Variables.UnmarshalBinary(data[8:]); err != nil {
 		return err
 	}

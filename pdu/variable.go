@@ -5,7 +5,6 @@
 package pdu
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -28,102 +27,181 @@ func (v *Variable) Set(oid value.OID, t VariableType, value interface{}) {
 	v.Value = value
 }
 
-// MustGetByteSize returns the number of bytes, the binding would need in the encoded version. It panics on error.
-func (v *Variable) MustGetByteSize() int {
-	bytes, err := v.MarshalBinary()
-	if err != nil {
-		panic(err)
+// ByteSize returns the number of bytes the variable would occupy when marshaled.
+func (v *Variable) ByteSize() int {
+	size := 4 // varbind header: type + 3 reserved bytes
+	size += v.Name.ByteSize()
+
+	switch v.Type {
+	case VariableTypeInteger:
+		size += 4
+	case VariableTypeOctetString:
+		text := v.Value.(string)
+		l := len(text)
+		pad := (4 - (l % 4)) & 3
+		size += 4 + l + pad
+	case VariableTypeNull, VariableTypeNoSuchObject, VariableTypeNoSuchInstance, VariableTypeEndOfMIBView:
+		// no payload
+	case VariableTypeObjectIdentifier:
+		// v.Value is string during marshal path, value.OID during unmarshal path
+		var oidVal value.OID
+		switch vv := v.Value.(type) {
+		case string:
+			parsed, _ := value.ParseOID(vv)
+			oidVal = parsed
+		case value.OID:
+			oidVal = vv
+		default:
+			oidVal = nil
+		}
+		oi := &ObjectIdentifier{}
+		oi.SetIdentifier(oidVal)
+		size += oi.ByteSize()
+	case VariableTypeIPAddress:
+		ip := v.Value.(net.IP)
+		l := len(ip)
+		pad := (4 - (l % 4)) & 3
+		size += 4 + l + pad
+	case VariableTypeCounter32, VariableTypeGauge32:
+		size += 4
+	case VariableTypeTimeTicks:
+		size += 4
+	case VariableTypeOpaque:
+		data := v.Value.([]byte)
+		l := len(data)
+		pad := (4 - (l % 4)) & 3
+		size += 4 + l + pad
+	case VariableTypeCounter64:
+		size += 8
+	default:
+		// unknown - treat as no payload
 	}
-	return len(bytes)
+
+	return size
 }
 
 // MarshalBinary returns the pdu packet as a slice of bytes.
 func (v *Variable) MarshalBinary() ([]byte, error) {
-	buffer := &bytes.Buffer{}
-
-	// VarBind header: 1 byte type, 3 reserved bytes (AgentX alignment)
-	buffer.WriteByte(byte(v.Type))
-	buffer.WriteByte(0x00)
-	buffer.WriteByte(0x00)
-	buffer.WriteByte(0x00)
-
-	nameBytes, err := v.Name.MarshalBinary()
-	if err != nil {
+	total := v.ByteSize()
+	result := make([]byte, total)
+	if _, err := v.MarshalTo(result); err != nil {
 		return nil, err
 	}
-	buffer.Write(nameBytes)
+	return result, nil
+}
 
+// MarshalTo writes the variable into dst and returns bytes written.
+// dst must have capacity >= v.ByteSize().
+func (v *Variable) MarshalTo(dst []byte) (int, error) {
+	offset := 0
+
+	// VarBind header
+	dst[offset] = byte(v.Type)
+	dst[offset+1] = 0x00
+	dst[offset+2] = 0x00
+	dst[offset+3] = 0x00
+	offset += 4
+
+	// Name (inline ObjectIdentifier marshal)
+	nameCount := len(v.Name.Subidentifiers)
+	dst[offset] = byte(nameCount)
+	dst[offset+1] = v.Name.Prefix
+	dst[offset+2] = v.Name.Include
+	// dst[offset+3] reserved
+	offset += 4
+	for i, sub := range v.Name.Subidentifiers {
+		binary.LittleEndian.PutUint32(dst[offset+i*4:], sub)
+	}
+	offset += nameCount * 4
+
+	// Value
 	switch v.Type {
 	case VariableTypeInteger:
-		value := v.Value.(int32)
-		binary.Write(buffer, binary.LittleEndian, &value)
+		value := uint32(v.Value.(int32))
+		binary.LittleEndian.PutUint32(dst[offset:], value)
+		offset += 4
 	case VariableTypeOctetString:
-		octetString := &OctetString{Text: v.Value.(string)}
-		octetStringBytes, err := octetString.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		buffer.Write(octetStringBytes)
+		text := v.Value.(string)
+		l := len(text)
+		pad := (4 - (l % 4)) & 3
+		binary.LittleEndian.PutUint32(dst[offset:], uint32(l))
+		offset += 4
+		copy(dst[offset:], text)
+		offset += l + pad
 	case VariableTypeNull, VariableTypeNoSuchObject, VariableTypeNoSuchInstance, VariableTypeEndOfMIBView:
-		break
+		// no payload
 	case VariableTypeObjectIdentifier:
-		targetOID, err := value.ParseOID(v.Value.(string))
-		if err != nil {
-			return nil, err
+		// Accept string or value.OID
+		var oidVal value.OID
+		switch vv := v.Value.(type) {
+		case string:
+			parsed, err := value.ParseOID(vv)
+			if err != nil {
+				return 0, err
+			}
+			oidVal = parsed
+		case value.OID:
+			oidVal = vv
+		default:
+			return 0, fmt.Errorf("unexpected OID value type %T", v.Value)
 		}
-
-		oi := &ObjectIdentifier{}
-		oi.SetIdentifier(targetOID)
-		oiBytes, err := oi.MarshalBinary()
-		if err != nil {
-			return nil, err
+		// Apply AgentX prefix compression like ObjectIdentifier.SetIdentifier
+		var subids []uint32
+		prefix := byte(0)
+		if len(oidVal) > 4 && oidVal[0] == 1 && oidVal[1] == 3 && oidVal[2] == 6 && oidVal[3] == 1 {
+			prefix = byte(oidVal[4])
+			subids = oidVal[5:]
+		} else {
+			subids = oidVal
 		}
-		buffer.Write(oiBytes)
+		count := len(subids)
+		dst[offset] = byte(count)
+		dst[offset+1] = prefix
+		dst[offset+2] = 0 // Include defaults to false for value OID
+		offset += 4
+		for i, sub := range subids {
+			binary.LittleEndian.PutUint32(dst[offset+i*4:], sub)
+		}
+		offset += count * 4
 	case VariableTypeIPAddress:
-		ip := v.Value.(net.IP)
-		octetString := &OctetString{Text: string(ip)}
-		octetStringBytes, err := octetString.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		buffer.Write(octetStringBytes)
+		ip := []byte(v.Value.(net.IP))
+		l := len(ip)
+		pad := (4 - (l % 4)) & 3
+		binary.LittleEndian.PutUint32(dst[offset:], uint32(l))
+		offset += 4
+		copy(dst[offset:], ip)
+		offset += l + pad
 	case VariableTypeCounter32, VariableTypeGauge32:
 		value := v.Value.(uint32)
-		binary.Write(buffer, binary.LittleEndian, &value)
+		binary.LittleEndian.PutUint32(dst[offset:], value)
+		offset += 4
 	case VariableTypeTimeTicks:
 		value := uint32(v.Value.(time.Duration).Seconds() * 100)
-		binary.Write(buffer, binary.LittleEndian, &value)
+		binary.LittleEndian.PutUint32(dst[offset:], value)
+		offset += 4
 	case VariableTypeOpaque:
-		octetString := &OctetString{Text: string(v.Value.([]byte))}
-		octetStringBytes, err := octetString.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		buffer.Write(octetStringBytes)
+		data := v.Value.([]byte)
+		l := len(data)
+		pad := (4 - (l % 4)) & 3
+		binary.LittleEndian.PutUint32(dst[offset:], uint32(l))
+		offset += 4
+		copy(dst[offset:], data)
+		offset += l + pad
 	case VariableTypeCounter64:
 		value := v.Value.(uint64)
-		binary.Write(buffer, binary.LittleEndian, &value)
+		binary.LittleEndian.PutUint64(dst[offset:], value)
+		offset += 8
 	default:
-		return nil, fmt.Errorf("unhandled variable type %s", v.Type)
+		return 0, fmt.Errorf("unhandled variable type %s", v.Type)
 	}
 
-	return buffer.Bytes(), nil
+	return offset, nil
 }
 
 // UnmarshalBinary sets the packet structure from the provided slice of bytes.
 func (v *Variable) UnmarshalBinary(data []byte) error {
-	buffer := bytes.NewBuffer(data)
-
-	// Read 1 byte type and skip 3 reserved bytes
-	if b, err := buffer.ReadByte(); err != nil {
-		return err
-	} else {
-		v.Type = VariableType(b)
-	}
-	// skip 3 reserved bytes
-	if _, err := buffer.Read(make([]byte, 3)); err != nil {
-		return err
-	}
+	// Type + 3 reserved bytes
+	v.Type = VariableType(data[0])
 	offset := 4
 
 	if err := v.Name.UnmarshalBinary(data[offset:]); err != nil {
@@ -133,17 +211,13 @@ func (v *Variable) UnmarshalBinary(data []byte) error {
 
 	switch v.Type {
 	case VariableTypeInteger:
-		value := int32(0)
-		if err := binary.Read(buffer, binary.LittleEndian, &value); err != nil {
-			return err
-		}
-		v.Value = value
+		v.Value = int32(binary.LittleEndian.Uint32(data[offset:]))
+		offset += 4
 	case VariableTypeOctetString:
-		octetString := &OctetString{}
-		if err := octetString.UnmarshalBinary(data[offset:]); err != nil {
-			return err
-		}
-		v.Value = octetString.Text
+		length := int(binary.LittleEndian.Uint32(data[offset:]))
+		start := offset + 4
+		end := start + length
+		v.Value = string(data[start:end])
 	case VariableTypeNull, VariableTypeNoSuchObject, VariableTypeNoSuchInstance, VariableTypeEndOfMIBView:
 		v.Value = nil
 	case VariableTypeObjectIdentifier:
@@ -153,35 +227,29 @@ func (v *Variable) UnmarshalBinary(data []byte) error {
 		}
 		v.Value = oid.GetIdentifier()
 	case VariableTypeIPAddress:
-		octetString := &OctetString{}
-		if err := octetString.UnmarshalBinary(data[offset:]); err != nil {
-			return err
-		}
-		v.Value = net.IP(octetString.Text)
+		length := int(binary.LittleEndian.Uint32(data[offset:]))
+		start := offset + 4
+		end := start + length
+		b := make([]byte, length)
+		copy(b, data[start:end])
+		v.Value = net.IP(b)
 	case VariableTypeCounter32, VariableTypeGauge32:
-		value := uint32(0)
-		if err := binary.Read(buffer, binary.LittleEndian, &value); err != nil {
-			return err
-		}
-		v.Value = value
+		v.Value = binary.LittleEndian.Uint32(data[offset:])
+		offset += 4
 	case VariableTypeTimeTicks:
-		value := uint32(0)
-		if err := binary.Read(buffer, binary.LittleEndian, &value); err != nil {
-			return err
-		}
+		value := binary.LittleEndian.Uint32(data[offset:])
+		offset += 4
 		v.Value = time.Duration(value) * time.Second / 100
 	case VariableTypeOpaque:
-		octetString := &OctetString{}
-		if err := octetString.UnmarshalBinary(data[offset:]); err != nil {
-			return err
-		}
-		v.Value = []byte(octetString.Text)
+		length := int(binary.LittleEndian.Uint32(data[offset:]))
+		start := offset + 4
+		end := start + length
+		b := make([]byte, length)
+		copy(b, data[start:end])
+		v.Value = b
 	case VariableTypeCounter64:
-		value := uint64(0)
-		if err := binary.Read(buffer, binary.LittleEndian, &value); err != nil {
-			return err
-		}
-		v.Value = value
+		v.Value = binary.LittleEndian.Uint64(data[offset:])
+		offset += 8
 	default:
 		return fmt.Errorf("unhandled variable type %s", v.Type)
 	}

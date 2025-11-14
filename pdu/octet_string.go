@@ -5,7 +5,6 @@
 package pdu
 
 import (
-	"bytes"
 	"encoding/binary"
 )
 
@@ -16,28 +15,18 @@ type OctetString struct {
 
 // MarshalBinary returns the pdu packet as a slice of bytes.
 func (o *OctetString) MarshalBinary() ([]byte, error) {
-	buffer := &bytes.Buffer{}
-
-	binary.Write(buffer, binary.LittleEndian, uint32(len(o.Text)))
-	buffer.WriteString(o.Text)
-
-	for buffer.Len()%4 > 0 {
-		buffer.WriteByte(0x00)
-	}
-
-	return buffer.Bytes(), nil
+	l := len(o.Text)
+	pad := (4 - (l % 4)) & 3
+	result := make([]byte, 4+l+pad)
+	binary.LittleEndian.PutUint32(result[0:], uint32(l))
+	copy(result[4:], o.Text)
+	// padding bytes are already zeroed by make
+	return result, nil
 }
 
 // UnmarshalBinary sets the packet structure from the provided slice of bytes.
 func (o *OctetString) UnmarshalBinary(data []byte) error {
-	buffer := bytes.NewBuffer(data)
-
-	length := uint32(0)
-	if err := binary.Read(buffer, binary.LittleEndian, &length); err != nil {
-		return err
-	}
-
+	length := binary.LittleEndian.Uint32(data[0:])
 	o.Text = string(data[4 : 4+length])
-
 	return nil
 }

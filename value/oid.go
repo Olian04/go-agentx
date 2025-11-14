@@ -5,7 +5,6 @@
 package value
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,17 +16,50 @@ type OID []uint32
 // ParseOID parses the provided string and returns a valid oid. If one of the
 // subidentifiers cannot be parsed to an uint32, the function will return an error.
 func ParseOID(text string) (OID, error) {
-	var result OID
-
-	parts := strings.Split(text, ".")
-	for _, part := range parts {
-		subidentifier, err := strconv.ParseUint(part, 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("parse subidentifier uint32 from string [%s]: %w", part, err)
+	result := make(OID, 0, 8) // default small capacity
+	var current uint32
+	haveDigit := false
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if ch >= '0' && ch <= '9' {
+			haveDigit = true
+			current = current*10 + uint32(ch-'0')
+			continue
 		}
-		result = append(result, uint32(subidentifier))
+		if ch == '.' {
+			if !haveDigit {
+				// invalid empty component, fall back to strconv for error consistency
+				parts := strings.Split(text, ".")
+				result = result[:0]
+				for _, part := range parts {
+					val, err := strconv.ParseUint(part, 10, 32)
+					if err != nil {
+						return nil, err
+					}
+					result = append(result, uint32(val))
+				}
+				return result, nil
+			}
+			result = append(result, current)
+			current = 0
+			haveDigit = false
+			continue
+		}
+		// invalid char, delegate to slower parser for error
+		parts := strings.Split(text, ".")
+		result = result[:0]
+		for _, part := range parts {
+			val, err := strconv.ParseUint(part, 10, 32)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, uint32(val))
+		}
+		return result, nil
 	}
-
+	if haveDigit {
+		result = append(result, current)
+	}
 	return result, nil
 }
 
@@ -93,11 +125,47 @@ func SortOIDs(oids []OID) {
 }
 
 func (o OID) String() string {
-	var parts []string
-
-	for _, subidentifier := range o {
-		parts = append(parts, fmt.Sprintf("%d", subidentifier))
+	if len(o) == 0 {
+		return ""
 	}
+	var b strings.Builder
+	// Estimate: up to 10 digits per subid + dots
+	b.Grow(len(o)*11 - 1)
+	// first element without leading dot
+	b.WriteString(strconv.FormatUint(uint64(o[0]), 10))
+	for i := 1; i < len(o); i++ {
+		b.WriteByte('.')
+		b.WriteString(strconv.FormatUint(uint64(o[i]), 10))
+	}
+	return b.String()
+}
 
-	return strings.Join(parts, ".")
+// LowerBound returns the first index i in oids such that:
+// - oids[i] >= target if include == true
+// - oids[i] >  target if include == false
+// If no such index exists, returns len(oids).
+func LowerBound(oids []OID, target OID, include bool) int {
+	lo, hi := 0, len(oids)
+	for lo < hi {
+		mid := (lo + hi) >> 1
+		cmp := CompareOIDs(oids[mid], target)
+		if cmp < 0 || (!include && cmp == 0) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo
+}
+
+// InsertSorted inserts oid into a sorted slice and returns the new slice.
+func InsertSorted(oids []OID, oid OID) []OID {
+	i := LowerBound(oids, oid, true)
+	if i == len(oids) {
+		return append(oids, oid)
+	}
+	oids = append(oids, nil)   // grow by one
+	copy(oids[i+1:], oids[i:]) // shift right
+	oids[i] = oid              // place
+	return oids
 }

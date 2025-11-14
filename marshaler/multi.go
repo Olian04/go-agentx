@@ -19,15 +19,26 @@ func NewMulti(marshalers ...encoding.BinaryMarshaler) Multi {
 
 // MarshalBinary marshals all the binary marshalers and concatinates the results.
 func (m Multi) MarshalBinary() ([]byte, error) {
-	result := []byte{}
-
+	// First pass: marshal each part and compute total length
+	type part struct {
+		data []byte
+	}
+	parts := make([]part, 0, len(m))
+	total := 0
 	for _, marshaler := range m {
 		data, err := marshaler.MarshalBinary()
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, data...)
+		parts = append(parts, part{data: data})
+		total += len(data)
 	}
-
+	// Second pass: copy into a single buffer
+	result := make([]byte, total)
+	offset := 0
+	for _, p := range parts {
+		copy(result[offset:], p.data)
+		offset += len(p.data)
+	}
 	return result, nil
 }

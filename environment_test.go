@@ -5,7 +5,6 @@
 package agentx_test
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -28,11 +27,8 @@ func setUpTestEnvironment(tb testing.TB) *environment {
 
 	cmd := exec.Command("snmpd", "-Ln", "-f", "-C", "-c", "snmpd.conf")
 
-	stdout, err := cmd.StdoutPipe()
+	_, err := cmd.StdoutPipe()
 	require.NoError(tb, err)
-	go func() {
-		io.Copy(os.Stdout, stdout)
-	}()
 
 	slog.Info("running command", slog.String("command", cmd.String()))
 	require.NoError(tb, cmd.Start())

@@ -135,3 +135,66 @@ func TestListHandler(t *testing.T) {
 		assert.Equal(t, rows[4], ".1.3.6.1.4.1.45995.3.7 = STRING: \"test7\"")
 	})
 }
+
+func BenchmarkListHandlerSNMPGet(b *testing.B) {
+	e := setUpTestEnvironment(b)
+
+	lh := &agentx.ListHandler{}
+	i1 := lh.Add("1.3.6.1.4.1.45995.3.1")
+	i1.Type = pdu.VariableTypeOctetString
+	i1.Value = "test"
+
+	i2 := lh.Add("1.3.6.1.4.1.45995.3.3")
+	i2.Type = pdu.VariableTypeOctetString
+	i2.Value = "test2"
+
+	// Additional OIDs to more closely mirror production
+	i3 := lh.Add("1.3.6.1.4.1.45995.3.5")
+	i3.Type = pdu.VariableTypeOctetString
+	i3.Value = "test5"
+	i4 := lh.Add("1.3.6.1.4.1.45995.3.7")
+	i4.Type = pdu.VariableTypeOctetString
+	i4.Value = "test7"
+
+	session, err := e.client.Session(value.MustParseOID("1.3.6.1.4.1.45995"), "bench client", lh)
+	require.NoError(b, err)
+	b.Cleanup(func() { session.Close() })
+
+	baseOID := value.MustParseOID("1.3.6.1.4.1.45995")
+	require.NoError(b, session.Register(127, baseOID))
+	b.Cleanup(func() { session.Unregister(127, baseOID) })
+
+	target := "1.3.6.1.4.1.45995.3.1"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = SNMPGet(b, target)
+	}
+}
+
+func BenchmarkListHandlerSNMPGetParallel(b *testing.B) {
+	e := setUpTestEnvironment(b)
+
+	lh := &agentx.ListHandler{}
+	i1 := lh.Add("1.3.6.1.4.1.45995.3.1")
+	i1.Type = pdu.VariableTypeOctetString
+	i1.Value = "test"
+	i2 := lh.Add("1.3.6.1.4.1.45995.3.3")
+	i2.Type = pdu.VariableTypeOctetString
+	i2.Value = "test2"
+	session, err := e.client.Session(value.MustParseOID("1.3.6.1.4.1.45995"), "bench client", lh)
+	require.NoError(b, err)
+	b.Cleanup(func() { session.Close() })
+	baseOID := value.MustParseOID("1.3.6.1.4.1.45995")
+	require.NoError(b, session.Register(127, baseOID))
+	b.Cleanup(func() { session.Unregister(127, baseOID) })
+
+	target := "1.3.6.1.4.1.45995.3.1"
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = SNMPGet(b, target)
+		}
+	})
+}

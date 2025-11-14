@@ -16,6 +16,8 @@ import (
 type ListHandler struct {
 	oids  []value.OID
 	items map[string]*ListItem
+	// itemsByIndex mirrors oids by index for fast lookup without string conversions
+	itemsByIndex []*ListItem
 }
 
 // Add adds a list item for the provided oid and returns it.
@@ -25,9 +27,20 @@ func (l *ListHandler) Add(oid string) *ListItem {
 	}
 
 	parsedOID := value.MustParseOID(oid)
-	l.oids = append(l.oids, parsedOID)
-	value.SortOIDs(l.oids)
 	item := &ListItem{}
+	// Insert into sorted oids and parallel itemsByIndex slice
+	idx := value.LowerBound(l.oids, parsedOID, true)
+	if idx == len(l.oids) {
+		l.oids = append(l.oids, parsedOID)
+		l.itemsByIndex = append(l.itemsByIndex, item)
+	} else {
+		l.oids = append(l.oids, nil)
+		copy(l.oids[idx+1:], l.oids[idx:])
+		l.oids[idx] = parsedOID
+		l.itemsByIndex = append(l.itemsByIndex, nil)
+		copy(l.itemsByIndex[idx+1:], l.itemsByIndex[idx:])
+		l.itemsByIndex[idx] = item
+	}
 	l.items[oid] = item
 	return item
 }
@@ -38,8 +51,10 @@ func (l *ListHandler) Get(ctx context.Context, oid value.OID) (value.OID, pdu.Va
 		return nil, pdu.VariableTypeNoSuchObject, nil, nil
 	}
 
-	item, ok := l.items[oid.String()]
-	if ok {
+	// Binary search to avoid oid.String allocations and map lookup
+	idx := value.LowerBound(l.oids, oid, true)
+	if idx < len(l.oids) && value.CompareOIDs(l.oids[idx], oid) == 0 {
+		item := l.itemsByIndex[idx]
 		return oid, item.Type, item.Value, nil
 	}
 	return nil, pdu.VariableTypeNoSuchObject, nil, nil
@@ -51,18 +66,11 @@ func (l *ListHandler) GetNext(ctx context.Context, from value.OID, includeFrom b
 		return nil, pdu.VariableTypeNoSuchObject, nil, nil
 	}
 
-	for _, oid := range l.oids {
-		if oidWithin(oid, from, includeFrom, to) {
-			return l.Get(ctx, oid)
-		}
+	idx := value.LowerBound(l.oids, from, includeFrom)
+	if idx < len(l.oids) && value.CompareOIDs(l.oids[idx], to) == -1 {
+		item := l.itemsByIndex[idx]
+		return l.oids[idx], item.Type, item.Value, nil
 	}
 
 	return nil, pdu.VariableTypeNoSuchObject, nil, nil
-}
-
-func oidWithin(oid value.OID, from value.OID, includeFrom bool, to value.OID) bool {
-	fromCompare := value.CompareOIDs(from, oid)
-	toCompare := value.CompareOIDs(to, oid)
-
-	return (fromCompare == -1 || (fromCompare == 0 && includeFrom)) && (toCompare == 1)
 }

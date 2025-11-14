@@ -5,12 +5,12 @@
 package agentx
 
 import (
-	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/Olian04/go-agentx/pdu"
@@ -39,13 +39,17 @@ func Dial(network, address string, opts ...DialOption) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", network, address, err)
 	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetKeepAlive(true)
+	}
 	c := &Client{
 		logger:      options.logger,
 		network:     network,
 		address:     address,
 		options:     options,
 		conn:        conn,
-		requestChan: make(chan *request),
+		requestChan: make(chan *request, 64),
 		sessions:    make(map[uint32]*Session),
 	}
 
@@ -82,33 +86,58 @@ func (c *Client) runTransmitter() chan *pdu.HeaderPacket {
 	tx := make(chan *pdu.HeaderPacket)
 
 	go func() {
+		ctx := context.Background()
 		for headerPacket := range tx {
 			headerPacketBytes, err := headerPacket.MarshalBinary()
 			if err != nil {
+				// recycle on error too
+				if headerPacket.Header != nil {
+					releaseHeader(headerPacket.Header)
+				}
+				releaseHeaderPacket(headerPacket)
 				c.logger.Error("packet marshal error",
 					getPacketHeaderSlogAttrs(headerPacket.Header),
 					slog.Any("err", err),
 				)
 				continue
 			}
-			writer := bufio.NewWriter(c.conn)
-			if _, err := writer.Write(headerPacketBytes); err != nil {
+			// Write all bytes to the connection (handle partial writes)
+			left := headerPacketBytes
+			for len(left) > 0 {
+				n, err := c.conn.Write(left)
+				if err != nil {
+					if headerPacket.Header != nil {
+						releaseHeader(headerPacket.Header)
+					}
+					releaseHeaderPacket(headerPacket)
+					c.logger.Error("packet write error",
+						getPacketHeaderSlogAttrs(headerPacket.Header),
+						slog.Any("err", err),
+					)
+					break
+				}
+				left = left[n:]
+			}
+			if len(left) > 0 {
+				// write failed; skip logging "sent"
+				if headerPacket.Header != nil {
+					releaseHeader(headerPacket.Header)
+				}
+				releaseHeaderPacket(headerPacket)
 				c.logger.Error("packet write error",
 					getPacketHeaderSlogAttrs(headerPacket.Header),
-					slog.Any("err", err),
+					slog.String("err", "short write"),
 				)
 				continue
 			}
-			if err := writer.Flush(); err != nil {
-				c.logger.Error("packet flush error",
-					getPacketHeaderSlogAttrs(headerPacket.Header),
-					slog.Any("err", err),
-				)
-				continue
+			if c.logger.Enabled(ctx, slog.LevelDebug) {
+				c.logger.Debug("packet sent", getPacketHeaderSlogAttrs(headerPacket.Header))
 			}
-			c.logger.Debug("packet sent",
-				getPacketHeaderSlogAttrs(headerPacket.Header),
-			)
+			// recycle header and headerPacket after successful send
+			if headerPacket.Header != nil {
+				releaseHeader(headerPacket.Header)
+			}
+			releaseHeaderPacket(headerPacket)
 		}
 	}()
 
@@ -119,12 +148,13 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 	rx := make(chan *pdu.HeaderPacket)
 
 	go func() {
+		ctx := context.Background()
 	mainLoop:
 		for {
-			reader := bufio.NewReader(c.conn)
-			headerBytes := make([]byte, pdu.HeaderSize)
-			if _, err := reader.Read(headerBytes); err != nil {
-				if opErr, ok := err.(*net.OpError); ok && strings.HasSuffix(opErr.Error(), "use of closed network connection") {
+			headerBytes := acquireHeaderBuf()
+			if _, err := io.ReadFull(c.conn, headerBytes[:]); err != nil {
+				releaseHeaderBuf(headerBytes)
+				if errors.Is(err, net.ErrClosed) {
 					return
 				}
 				if err == io.EOF {
@@ -136,6 +166,10 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 						if err != nil {
 							c.logger.Error("re-connect error", slog.Any("err", err))
 							continue reopenLoop
+						}
+						if tcp, ok := conn.(*net.TCPConn); ok {
+							_ = tcp.SetNoDelay(true)
+							_ = tcp.SetKeepAlive(true)
 						}
 						c.conn = conn
 						go func() {
@@ -160,7 +194,8 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 			}
 
 			header := &pdu.Header{}
-			if err := header.UnmarshalBinary(headerBytes); err != nil {
+			if err := header.UnmarshalBinary(headerBytes[:]); err != nil {
+				releaseHeaderBuf(headerBytes)
 				c.logger.Error("header unmarshal error",
 					getPacketHeaderSlogAttrs(header),
 					slog.Any("err", err),
@@ -168,7 +203,10 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 				continue mainLoop
 			}
 
-			c.logger.Debug("packet received", getPacketHeaderSlogAttrs(header))
+			if c.logger.Enabled(ctx, slog.LevelDebug) {
+				c.logger.Debug("packet received", getPacketHeaderSlogAttrs(header))
+			}
+			releaseHeaderBuf(headerBytes)
 
 			var packet pdu.Packet
 			switch header.Type {
@@ -178,15 +216,14 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 				packet = &pdu.Get{}
 			case pdu.TypeGetNext:
 				packet = &pdu.GetNext{}
-			case pdu.TypeGetBulk:
-				packet = &pdu.GetBulk{}
 			default:
 				c.logger.Error("unable to handle packet", getPacketHeaderSlogAttrs(header))
 				continue mainLoop
 			}
 
-			packetBytes := make([]byte, header.PayloadLength)
-			if _, err := reader.Read(packetBytes); err != nil {
+			packetHandle, packetBytes := acquireIOBuf(int(header.PayloadLength))
+			if _, err := io.ReadFull(c.conn, packetBytes); err != nil {
+				releaseIOBuf(packetHandle)
 				c.logger.Error("unable to read packet",
 					getPacketHeaderSlogAttrs(header),
 					slog.Any("err", err),
@@ -195,6 +232,7 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 			}
 
 			if err := packet.UnmarshalBinary(packetBytes); err != nil {
+				releaseIOBuf(packetHandle)
 				c.logger.Error("unable to unmarshal packet",
 					getPacketHeaderSlogAttrs(header),
 					slog.Any("err", err),
@@ -202,6 +240,7 @@ func (c *Client) runReceiver() chan *pdu.HeaderPacket {
 				continue mainLoop
 			}
 
+			releaseIOBuf(packetHandle)
 			rx <- &pdu.HeaderPacket{Header: header, Packet: packet}
 		}
 	}()
@@ -240,13 +279,15 @@ func (c *Client) runDispatcher(tx, rx chan *pdu.HeaderPacket) {
 }
 
 func (c *Client) request(hp *pdu.HeaderPacket) *pdu.HeaderPacket {
-	responseChan := make(chan *pdu.HeaderPacket)
-	request := &request{
-		headerPacket: hp,
-		responseChan: responseChan,
-	}
-	c.requestChan <- request
-	headerPacket := <-responseChan
+	req := acquireRequest()
+	req.headerPacket = hp
+	req.responseChan = make(chan *pdu.HeaderPacket, 1)
+	c.requestChan <- req
+	headerPacket := <-req.responseChan
+	// recycle request struct
+	req.headerPacket = nil
+	req.responseChan = nil
+	releaseRequest(req)
 	return headerPacket
 }
 
